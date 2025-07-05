@@ -1,0 +1,7 @@
+# depslib dependency file v1.0
+1751642380 source:c:\users\lenovo\documents\assmbler\project fawry\main.cpp
+	<iostream>
+	<vector>
+	<string>
+	<ctime>
+
