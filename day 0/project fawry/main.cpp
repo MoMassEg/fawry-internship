@@ -1,65 +1,131 @@
 #include <iostream>
 #include <vector>
 #include <string>
+#include <iomanip>
 using namespace std;
 
-class Product {
-    string name;
-    double price, weight;
-    int quantity, expiry;
-    bool requiresShipping;
-
+class IShippable {
 public:
-    Product(string n, double p, int q, int exp = -1, double w = 0, bool ship = false)
-        : name(n), price(p), quantity(q), expiry(exp), weight(w), requiresShipping(ship){}
-
-    string getName() {
-         return name;
-         }
-    double getPrice() {
-        return price;
-        }
-    int getStock() {
-        return quantity;
-        }
-    double getWeight() {
-        return weight;
-        }
-    bool isExpired() {
-        return expiry != -1 && expiry <= 0;
-        }
-    bool needsShipping() {
-        return requiresShipping;
-        }
-
-    void reduceStock(int q) {
-        quantity -= q;
-        }
+    virtual ~IShippable() = default;
+    virtual string getName() = 0;
+    virtual double getWeight() = 0;
 };
 
-class Item {
+class Product {
+protected:
+    string name;
+    double price;
+    int quantity;
+
+public:
+    Product(string n, double p, int q) : name(n), price(p), quantity(q) {}
+    virtual ~Product() = default;
+
+    string getProductName() { return name; }
+    double getPrice() { return price; }
+    int getQuantity() { return quantity; }
+
+    void reduceQuantity(int q) { quantity -= q; }
+
+    virtual bool isExpired() { return false; }
+    virtual bool requiresShipping() { return false; }
+    virtual double getShippingCost() { return 0; }
+    virtual IShippable* getShippableInterface() { return nullptr; }
+};
+
+class ExpirableProduct : virtual public Product {
+protected:
+    int daysToExpire;
+
+public:
+    ExpirableProduct(string n, double p, int q, int days)
+        : Product(n, p, q), daysToExpire(days) {}
+
+    bool isExpired() override {
+        return daysToExpire <= 0;
+    }
+};
+
+class ShippableProduct : virtual public Product, public IShippable {
+protected:
+    double weight;
+
+public:
+    ShippableProduct(string n, double p, int q, double w)
+        : Product(n, p, q), weight(w) {}
+
+    bool requiresShipping() override { return true; }
+    double getShippingCost() override { return 30; } // Fixed shipping cost
+
+    IShippable* getShippableInterface() override {
+        return this;
+    }
+
+    string getName() override { return name; }
+    double getWeight() override { return weight; }
+};
+
+class Cheese : public ShippableProduct, public ExpirableProduct {
+public:
+    Cheese(double p, int q, double w, int days)
+        : Product("Cheese", p, q),
+          ShippableProduct("Cheese", p, q, w),
+          ExpirableProduct("Cheese", p, q, days) {}
+
+    bool isExpired() override {
+        return ExpirableProduct::isExpired();
+    }
+};
+
+class Biscuits : public ExpirableProduct, public ShippableProduct {
+public:
+    Biscuits(double p, int q, double w, int days)
+        : Product("Biscuits", p, q),
+          ExpirableProduct("Biscuits", p, q, days),
+          ShippableProduct("Biscuits", p, q, w) {}
+
+    bool isExpired() override {
+        return ExpirableProduct::isExpired();
+    }
+};
+
+class TV : public ShippableProduct {
+public:
+    TV(double p, int q, double w)
+        : Product("TV", p, q),
+          ShippableProduct("TV", p, q, w) {}
+};
+
+class ScratchCard : public Product {
+public:
+    ScratchCard(double p, int q)
+        : Product("Mobile scratch cards", p, q) {}
+};
+
+class CartItem {
 public:
     Product* product;
     int quantity;
 
-    Item(Product* p, int q) : product(p), quantity(q){}
+    CartItem(Product* p, int q) : product(p), quantity(q) {}
 };
 
 class Cart {
-    vector<Item> items;
+    vector<CartItem> items;
 
 public:
-    void addItem(Product* p, int qty) {
-        if (qty > p->getStock()) throw runtime_error(p->getName() + " out of stock");
-        items.emplace_back(p, qty);
+    void addProduct(Product* p, int quantity) {
+        if (quantity > p->getQuantity()) {
+            throw runtime_error(p->getProductName() + " - requested quantity exceeds available stock");
+        }
+        if (p->isExpired()) {
+            throw runtime_error(p->getProductName() + " is expired");
+        }
+        items.push_back(CartItem(p, quantity));
     }
 
-    vector<Item>& getItems() {
-        return items;
-        }
-    bool isEmpty() {
-        return items.empty();
-        }
+    vector<CartItem>& getItems() { return items; }
+    bool isEmpty() { return items.empty(); }
 };
 
 class Customer {
@@ -69,139 +135,159 @@ class Customer {
 public:
     Customer(string n, double b) : name(n), balance(b) {}
 
+    string getName() { return name; }
+    double getBalance() { return balance; }
+
     void pay(double amount) {
-        if (balance < amount) throw runtime_error("Not enough balance");
+        if (balance < amount) {
+            throw runtime_error("Customer's balance is insufficient");
+        }
         balance -= amount;
     }
-
-    double getBalance() {
-        return balance;
-        }
 };
 
-class Shipping {
+class ShippingService {
 public:
-    static void shipItems(const vector<pair<string, double>>& packages) {
-        cout << "** Shipment Notice **\n";
+    static void ship(vector<CartItem>& items) {
+        cout << "** Shipment notice **\n";
         double totalWeight = 0;
-        for (auto& [name, weight] : packages) {
-            cout << "1x " << name << endl;
-            totalWeight += weight;
+
+        for (auto& item : items) {
+            if (item.product->requiresShipping()) {
+                IShippable* shippableItem = item.product->getShippableInterface();
+                if (shippableItem) {
+                    double weightInGrams = shippableItem->getWeight() * 1000; // Convert kg to grams
+                    totalWeight += shippableItem->getWeight() * item.quantity;
+                    cout << item.quantity << "x " << shippableItem->getName()
+                         << " " << (int)weightInGrams << "g\n";
+                }
+            }
         }
-        cout << "Total package weight: " << totalWeight << "kg\n";
+
+        cout << "Total package weight " << totalWeight << "kg\n";
     }
 };
 
 class Checkout {
 public:
     static void process(Customer& customer, Cart& cart) {
-        if (cart.isEmpty()) throw runtime_error("Cart is empty");
+        if (cart.isEmpty()) {
+            throw runtime_error("Cart is empty");
+        }
 
-        double subtotal = 0, shippingCost = 0;
-        vector<pair<string, double>> shippingList;
+        double subtotal = 0;
+        double shippingFees = 0;
+        bool hasShippableItems = false;
 
         for (auto& item : cart.getItems()) {
-            Product* p = item.product;
-            int qty = item.quantity;
+            if (item.quantity > item.product->getQuantity()) {
+                throw runtime_error(item.product->getProductName() + " is out of stock");
+            }
+            if (item.product->isExpired()) {
+                throw runtime_error(item.product->getProductName() + " is expired");
+            }
 
-            if (p->isExpired()) throw runtime_error(p->getName() + " is expired");
+            subtotal += item.product->getPrice() * item.quantity;
 
-            subtotal += qty * p->getPrice();
-
-            if (p->needsShipping()) {
-                for (int i = 0; i < qty; ++i)
-                    shippingList.emplace_back(p->getName(), p->getWeight());
-                shippingCost += 10 * qty;
+            if (item.product->requiresShipping()) {
+                hasShippableItems = true;
             }
         }
 
-        double total = subtotal + shippingCost;
+        if (hasShippableItems) {
+            shippingFees = 30;
+        }
+
+        double total = subtotal + shippingFees;
         customer.pay(total);
 
-        for (auto& item : cart.getItems())
-            item.product->reduceStock(item.quantity);
+        for (auto& item : cart.getItems()) {
+            item.product->reduceQuantity(item.quantity);
+        }
 
-        if (!shippingList.empty())
-            Shipping::shipItems(shippingList);
+        if (hasShippableItems) {
+            ShippingService::ship(cart.getItems());
+        }
 
-        cout << "\n** Receipt **\n";
-        for (auto& item : cart.getItems())
-            cout << item.quantity << "x " << item.product->getName()
-                 << " = " << item.quantity * item.product->getPrice() << "\n";
-        cout << "Subtotal: " << subtotal << "\n";
-        cout << "Shipping: " << shippingCost << "\n";
-        cout << "Total: " << total << "\n";
-        cout << "Remaining Balance: " << customer.getBalance() << "\n";
+        cout << "** Checkout receipt **\n";
+        for (auto& item : cart.getItems()) {
+            cout << item.quantity << "x " << item.product->getProductName()
+                 << " " << (int)(item.product->getPrice() * item.quantity) << "\n";
+        }
+        cout << "----------------------\n";
+        cout << "Subtotal " << (int)subtotal << "\n";
+        cout << "Shipping " << (int)shippingFees << "\n";
+        cout << "Amount " << (int)total << "\n";
     }
 };
 
 int main() {
-    Product* cheese = new Product("Cheese", 100, 5, 3, 0.2, true);
-    Product* biscuits = new Product("Biscuits", 150, 2, 2, 0.7, true);
-    Product* tv = new Product("TV", 300, 3, -1, 10, true);
-    Product* card = new Product("Scratch Card", 50, 10);
+    Cheese* cheese = new Cheese(100, 10, 0.4, 5);
+    Biscuits* biscuits = new Biscuits(150, 15, 0.7, 10);
+    TV* tv = new TV(500, 5, 15);
+    ScratchCard* scratchCard = new ScratchCard(10, 50);
+
+    Customer customer1("Muhammed Saad", 1000);
 
     try {
-        Customer c1("Muhamme_Saad", 1000);
         Cart cart1;
-        cart1.addItem(cheese, 2);
-        cart1.addItem(biscuits, 1);
-        cart1.addItem(card, 1);
-        Checkout::process(c1, cart1);
+        cart1.addProduct(cheese, 2);
+        cart1.addProduct(biscuits, 1);
+
+        Checkout::process(customer1, cart1);
     } catch (exception& e) {
-        cout << "[Error] " << e.what() << endl;
+        cout << "Error: " << e.what() << "\n";
     }
 
-    cout<<endl;
+    cout << "\n--- Test expired product ---\n";
+    Cheese* expiredCheese = new Cheese(30, 5, 0.3, 0);
+    Customer customer2("Hany Ahmed", 500);
 
     try {
-        Customer c2("MO_SH", 200);
         Cart cart2;
-        cart2.addItem(tv, 2);
-        Checkout::process(c2, cart2);
+        cart2.addProduct(expiredCheese, 1);
+        Checkout::process(customer2, cart2);
     } catch (exception& e) {
-        cout << "[Error] " << e.what() << endl;
+        cout << "Error: " << e.what() << "\n";
     }
 
-        cout<<endl;
+    cout << "\n--- Test insufficient balance ---\n";
+    Customer customer3("mohamed shaban", 100);
 
-
-       try {
-        Product* oldMilk = new Product("Old Milk", 80, 2, 0, 0.3, true);
-        Customer c3("Hany_Ahmed", 500);
+    try {
         Cart cart3;
-        cart3.addItem(oldMilk, 1);
-        Checkout::process(c3, cart3);
-        delete oldMilk;
+        cart3.addProduct(tv, 1);
+        Checkout::process(customer3, cart3);
     } catch (exception& e) {
-        cout << "[Error] " << e.what() << endl;
+        cout << "Error: " << e.what() << "\n";
     }
 
-        cout<<endl;
-
+    cout << "\n--- Test empty cart ---\n";
+    Customer customer4("mo_sh", 500);
 
     try {
-        Customer c4("EmptyCart", 100);
         Cart cart4;
-        Checkout::process(c4, cart4);
+        Checkout::process(customer4, cart4);
     } catch (exception& e) {
-        cout << "[Error] " << e.what() << endl;
+        cout << "Error: " << e.what() << "\n";
     }
 
-        cout<<endl;
+    cout << "\n--- Test out of stock ---\n";
+    Customer customer5("not_mo_sh", 1000);
 
     try {
-        Customer c5("OutStock", 500);
         Cart cart5;
-        cart5.addItem(biscuits, 100);
-        Checkout::process(c5, cart5);
+        cart5.addProduct(cheese, 20);
+        Checkout::process(customer5, cart5);
     } catch (exception& e) {
-        cout << "[Error] " << e.what() << endl;
+        cout << "Error: " << e.what() << "\n";
     }
 
     delete cheese;
     delete biscuits;
     delete tv;
-    delete card;
+    delete scratchCard;
+    delete expiredCheese;
+
     return 0;
 }
